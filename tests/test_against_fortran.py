@@ -125,3 +125,21 @@ def test_tecplot_roundtrip(tmp_path):
         io.write_tecplot_zone(fh, ["X", "Y", "T"], [x, y, x * y + 123456789.0])
     z = io.read_tecplot(tmp_path / "t.dat")[0]
     assert np.allclose(z["T"], x * y + 123456789.0)
+
+
+@pytest.mark.parametrize("kind", ["ring", "elliptic", "eccentric", "square_hole"])
+def test_ready_made_shapes_give_valid_mesh(kind):
+    from ringflow import shapes, quality
+    xo, yo, xi, yi = shapes.make(kind)
+    fp = (np.zeros(51), np.zeros(51))
+    o = boundary.redistribute(xo, yo, 51, _fp=fp)
+    i = boundary.redistribute(xi, yi, 51, _fp=fp, closed_fix_first_to_last=True)
+    res = mesh.generate(o.x, o.y, i.x, i.y, mesh.MeshConfig(max_iter=300), verbose=False)
+    _, stats = quality.analyze(res.best["Q1"]["x"], res.best["Q1"]["y"])
+    assert stats["Q1"]["bad"] == 0 and stats["Q1"]["min"] > 0.5
+
+
+def test_shape_rejects_hole_outside():
+    from ringflow import shapes
+    with pytest.raises(ValueError):
+        shapes.make("elliptic", b_in=3.0)

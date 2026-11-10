@@ -41,7 +41,7 @@ from matplotlib.figure import Figure                     # noqa: E402
 from matplotlib.backends.backend_tkagg import (          # noqa: E402
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 
-from . import boundary, mesh, convection, io, quality    # noqa: E402
+from . import boundary, mesh, convection, io, quality, shapes    # noqa: E402
 from .quality import CRITERIA                             # noqa: E402
 
 DATA = Path(__file__).parent / "data"
@@ -415,11 +415,24 @@ class App(tk.Tk):
         self.nb.add(tab, text="1. Сетка и критерии качества")
         side, main = self._sidebar(tab)
 
-        g = self._section(side, "Граница области", first=True)
+        g = self._section(side, "Расчетная область", first=True)
+        self.shape_names = {"thesis": "Область из диссертации", **shapes.TITLES,
+                            "files": "Свои файлы контуров"}
+        self.shape_key = "thesis"
+        self.shape_var = tk.StringVar(value=self.shape_names["thesis"])
+        box = ttk.Combobox(g, textvariable=self.shape_var, state="readonly",
+                           values=list(self.shape_names.values()))
+        box.pack(fill="x", pady=(0, PAD // 2))
+        box.bind("<<ComboboxSelected>>", lambda e: self._shape_changed())
+        self.shape_params = {k: {p: tk.StringVar(value=str(d)) for p, _, d in spec}
+                             for k, (_, spec) in shapes.SHAPES.items()}
+        self.shape_frame = ttk.Frame(g, style="Side.TFrame")
+        self.shape_frame.pack(fill="x")
         self.f_outer = tk.StringVar(value=str(DATA / "bottom_border.dat"))
         self.f_inner = tk.StringVar(value=str(DATA / "top_border.dat"))
+        self.files_frame = ttk.Frame(g, style="Side.TFrame")
         for lab, var in (("Внешний контур", self.f_outer), ("Внутренний контур", self.f_inner)):
-            row = ttk.Frame(g, style="Side.TFrame"); row.pack(fill="x", pady=2)
+            row = ttk.Frame(self.files_frame, style="Side.TFrame"); row.pack(fill="x", pady=2)
             ttk.Label(row, text=lab, width=17).pack(side="left")
             name = tk.StringVar(value=Path(var.get()).name)
             var.trace_add("write", lambda *a, v=var, n=name: n.set(Path(v.get()).name))
@@ -485,10 +498,78 @@ class App(tk.Tk):
         self.grid_xy = None          # currently displayed grid (x, y)
         self.grid_title = ""
 
+    def _shape_changed(self):
+        names = {v: k for k, v in self.shape_names.items()}
+        self.shape_key = names[self.shape_var.get()]
+        for w in self.shape_frame.winfo_children():
+            w.destroy()
+        self.files_frame.pack_forget()
+        if self.shape_key == "files":
+            self.files_frame.pack(fill="x")
+        elif self.shape_key in shapes.SHAPES:
+            spec = shapes.SHAPES[self.shape_key][1]
+            entries = self._params(self.shape_frame,
+                                   [(lab, self.shape_params[self.shape_key][k]) for k, lab, _ in spec])
+            for e in entries:
+                e.bind("<Return>", lambda ev: self._preview_shape())
+                e.bind("<FocusOut>", lambda ev: self._preview_shape())
+        self._preview_shape()
+
+    def _contour_arrays(self):
+        """(xo, yo, xi, yi) of the selected domain."""
+        k = self.shape_key
+        if k in shapes.SHAPES:
+            spec = shapes.SHAPES[k][1]
+            vals = {p: self._num(self.shape_params[k][p], float, lab) for p, lab, _ in spec}
+            return shapes.make(k, **vals)
+        fo, fi = ((DATA / "bottom_border.dat", DATA / "top_border.dat") if k == "thesis"
+                  else (self.f_outer.get(), self.f_inner.get()))
+        xo, yo = io.read_points(fo)
+        xi, yi = io.read_points(fi)
+        return xo, yo, xi, yi
+
+    def _contour_files(self):
+        """Contour files for the mesh generator (shapes are written to the results folder)."""
+        if self.shape_key in shapes.SHAPES:
+            self._contour_arrays()            # validates the numbers
+            spec = shapes.SHAPES[self.shape_key][1]
+            vals = {p: float(self.shape_params[self.shape_key][p].get().replace(",", "."))
+                    for p, _, _ in spec}
+            return shapes.write(self.shape_key, self.out("0_контуры"), **vals)
+        if self.shape_key == "thesis":
+            return str(DATA / "bottom_border.dat"), str(DATA / "top_border.dat")
+        return self.f_outer.get(), self.f_inner.get()
+
+    def _preview_shape(self):
+        """Show the two contours of the selected domain (before the mesh is built)."""
+        try:
+            xo, yo, xi, yi = self._contour_arrays()
+        except Exception as e:
+            self._set_status(f"Область: {e}", "error")
+            return
+        self._set_status("Область выбрана. Нажмите «Построить сетку».")
+        self.mesh_res = None
+        self.grid_xy = None
+        fig = self.mesh_fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+        ax.fill(xo, yo, color=ACCENT_SOFT, zorder=0)
+        ax.fill(xi, yi, color="white", zorder=1)
+        ax.plot(xo, yo, color=ACCENT, lw=1.6, label="внешний контур")
+        ax.plot(xi, yi, color="#b45309", lw=1.6, label="внутренний контур")
+        ax.plot([xo[0], xi[0]], [yo[0], yi[0]], "k--", lw=0.8, label="начало обхода")
+        ax.set_aspect("equal")
+        ax.legend(fontsize=8, loc="upper right")
+        ax.set_title(self.shape_var.get())
+        fig.tight_layout()
+        self.mesh_canvas.draw()
+        self.table.delete(*self.table.get_children())
+
     def _pick_file(self, var):
         f = filedialog.askopenfilename(filetypes=[("Данные", "*.dat *.txt"), ("Все", "*.*")])
         if f:
             var.set(f)
+            self._preview_shape()
 
     def _show_ring_mesh(self):
         self.mesh_res = None
@@ -521,7 +602,10 @@ class App(tk.Tk):
                                   fix_metric_stencil=self.m_fix.get())
         except ValueError as e:
             messagebox.showerror("Ошибка", str(e)); return
-        outer, inner = self.f_outer.get(), self.f_inner.get()
+        try:
+            outer, inner = self._contour_files()
+        except ValueError as e:
+            messagebox.showerror("Ошибка", str(e)); return
         bdir, mdir = self.out("1_граница"), self.out("2_сетка")
         self.write(f"Построение сетки {cfg.n1} x {cfg.n2}, до {cfg.max_iter} итераций ...")
         self.progress["value"] = 0
@@ -624,7 +708,7 @@ class App(tk.Tk):
         self.domain = tk.StringVar(value="ring")
         ttk.Radiobutton(d, text="Круговое кольцо, 0.5 ≤ r ≤ 2", value="ring",
                         variable=self.domain, command=self._domain_changed).pack(anchor="w", pady=1)
-        ttk.Radiobutton(d, text="Криволинейная область (сетка вкладки 1)", value="curved",
+        ttk.Radiobutton(d, text="Область и сетка из вкладки 1", value="curved",
                         variable=self.domain, command=self._domain_changed).pack(anchor="w", pady=1)
         ttk.Label(d, text="Внутренняя стенка горячая (T = 1), внешняя холодная (T = 0).",
                   style="Muted.TLabel", wraplength=300).pack(anchor="w", pady=(2, 0))
