@@ -1,0 +1,72 @@
+# Builds RingFlow.exe on a Windows machine at GitHub, checks it, and
+# publishes RingFlow_Windows.zip on the Releases page.
+#
+# Runs automatically on every push to main/master, and can be started by
+# hand: Actions -> "Build Windows program" -> Run workflow.
+
+name: Build Windows program
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller markdown
+
+      - name: Tests (Python vs original Fortran results)
+        run: python -m pytest -q
+
+      - name: Build RingFlow.exe
+        run: >
+          pyinstaller --noconfirm --windowed --name RingFlow
+          --add-data "ringflow/data;ringflow/data"
+          --hidden-import PIL._tkinter_finder
+          run_gui.py
+
+      - name: Self-test of the built program
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\RingFlow\RingFlow.exe" -ArgumentList "--selftest","selftest.txt" -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "self-test failed" }
+          if (-not (Select-String -Path selftest.txt -Pattern "SELFTEST OK" -Quiet)) { throw "self-test failed" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          python tools/make_description_html.py README.md "dist/RingFlow/Описание.html"
+          Copy-Item README.md "dist/RingFlow/README.md"
+          Compress-Archive -Path dist/RingFlow -DestinationPath RingFlow_Windows.zip
+          "{0:N0} MB" -f ((Get-Item RingFlow_Windows.zip).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RingFlow_Windows
+          path: RingFlow_Windows.zip
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: RingFlow 1.0.${{ github.run_number }}
+          body: |
+            Скачайте **RingFlow_Windows.zip**, распакуйте и запустите `RingFlow.exe`.
+            Описание: файл `Описание.html` внутри архива (или README на главной странице).
+          files: RingFlow_Windows.zip
+          make_latest: true

@@ -1,0 +1,5 @@
+numpy>=1.22
+matplotlib>=3.5
+numba>=0.56      # optional, makes the solvers ~100-200x faster
+pillow           # GIF animations
+pytest           # tests
