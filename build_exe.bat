@@ -2,6 +2,7 @@
 rem Builds RingFlow.exe on this computer (same steps as the GitHub build).
 rem Result: dist\RingFlow\RingFlow.exe  and  RingFlow_Windows.zip
 chcp 65001 >nul
+set PYTHONUTF8=1
 cd /d "%~dp0"
 set VIRTUAL_ENV=
 set PYTHONHOME=

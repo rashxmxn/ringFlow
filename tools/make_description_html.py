@@ -28,4 +28,4 @@ code{background:#f0f0f0;padding:1px 4px} blockquote{border-left:4px solid #2a6;m
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(f'<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>RingFlow - описание</title>'
                f'<style>{css}</style></head><body>{html}</body></html>', encoding="utf-8")
-print("written", dst)
+print("written", ascii(str(dst)))  # ascii(): Windows consoles may not show Cyrillic
